@@ -45,8 +45,58 @@ _CURRENT_VERSION = "1.0"
 _GITHUB_REPO = "khalidsaifullah-ks/antigravity-converstation-recovery"
 _RELEASES_URL = f"https://github.com/{_GITHUB_REPO}/releases/latest"
 
+# ─── Terminal Styling ────────────────────────────────────────────────────────
+CLR_RESET = "\033[0m"
+CLR_BOLD = "\033[1m"
+CLR_DIM = "\033[2m"
+CLR_RED = "\033[31m"
+CLR_GREEN = "\033[32m"
+CLR_YELLOW = "\033[33m"
+CLR_BLUE = "\033[34m"
+CLR_MAGENTA = "\033[35m"
+CLR_CYAN = "\033[36m"
+CLR_WHITE = "\033[37m"
+
+_SYSTEM = platform.system()
+
+def _enable_ansi_and_colors():
+    global CLR_RESET, CLR_BOLD, CLR_DIM, CLR_RED, CLR_GREEN, CLR_YELLOW, CLR_BLUE, CLR_MAGENTA, CLR_CYAN, CLR_WHITE
+    
+    use_color = sys.stdout.isatty()
+    if _SYSTEM == "Windows":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            hOut = kernel32.GetStdHandle(-11)
+            if hOut != -1:
+                mode = ctypes.c_ulong()
+                if kernel32.GetConsoleMode(hOut, ctypes.byref(mode)):
+                    if kernel32.SetConsoleMode(hOut, mode.value | 0x0004):
+                        use_color = True
+                    else:
+                        use_color = False
+                else:
+                    use_color = False
+            else:
+                use_color = False
+        except Exception:
+            use_color = False
+            
+    if not use_color:
+        CLR_RESET = ""
+        CLR_BOLD = ""
+        CLR_DIM = ""
+        CLR_RED = ""
+        CLR_GREEN = ""
+        CLR_YELLOW = ""
+        CLR_BLUE = ""
+        CLR_MAGENTA = ""
+        CLR_CYAN = ""
+        CLR_WHITE = ""
+
 def main():
-    print("Initializing Antigravity Conversation Recovery Utility...")
+    _enable_ansi_and_colors()
+    print(f"{CLR_BOLD}Initializing Antigravity Conversation Recovery Utility...{CLR_RESET}")
     return 0
 
 if __name__ == "__main__":
