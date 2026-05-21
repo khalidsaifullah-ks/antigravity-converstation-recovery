@@ -94,6 +94,72 @@ def _enable_ansi_and_colors():
         CLR_CYAN = ""
         CLR_WHITE = ""
 
+# ─── Path Detection ──────────────────────────────────────────────────────────
+# Antigravity was renamed to "Antigravity IDE" in a recent update.
+# We check the new name first, then fall back to the old name so the tool
+# works on both old and new installations.
+
+_ANTIGRAVITY_NAMES = ("Antigravity IDE", "antigravity", "Antigravity")
+
+def _is_wsl():
+    """Detect if running inside Windows Subsystem for Linux."""
+    if _SYSTEM != "Linux":
+        return False
+    if "microsoft" in platform.release().lower():
+        return True
+    try:
+        with open("/proc/version", "r") as f:
+            if "microsoft" in f.read().lower():
+                return True
+    except Exception:
+        pass
+    return False
+
+_IS_WSL = _is_wsl()
+
+def _get_wsl_windows_appdata():
+    """
+    Resolve the Windows %APPDATA% path from inside WSL.
+    Strategy 1: Ask Windows directly via cmd.exe and convert with wslpath.
+    Strategy 2: Scan /mnt/c/Users/ for user folders that have Antigravity installed.
+    Returns a WSL-accessible path string, or None if resolution fails.
+    """
+    # Strategy 1: cmd.exe %APPDATA% → wslpath
+    try:
+        proc = subprocess.run(
+            ['cmd.exe', '/c', 'echo %APPDATA%'],
+            capture_output=True, text=True, check=True
+        )
+        win_path = proc.stdout.strip()
+        if win_path and win_path != "%APPDATA%":
+            proc_wsl = subprocess.run(
+                ['wslpath', win_path],
+                capture_output=True, text=True, check=True
+            )
+            wsl_path = proc_wsl.stdout.strip()
+            if os.path.exists(wsl_path):
+                return wsl_path
+    except Exception:
+        pass
+
+    # Strategy 2: Scan /mnt/c/Users/ for user folders that have Antigravity
+    if os.path.exists("/mnt/c/Users"):
+        _skip = {"Default", "Default User", "All Users", "desktop.ini", "Public"}
+        try:
+            for user in os.listdir("/mnt/c/Users"):
+                if user in _skip:
+                    continue
+                appdata = os.path.join("/mnt/c/Users", user, "AppData", "Roaming")
+                if not os.path.exists(appdata):
+                    continue
+                for name in _ANTIGRAVITY_NAMES:
+                    if os.path.exists(os.path.join(appdata, name)):
+                        return appdata
+        except Exception:
+            pass
+
+    return None
+
 def main():
     _enable_ansi_and_colors()
     print(f"{CLR_BOLD}Initializing Antigravity Conversation Recovery Utility...{CLR_RESET}")
