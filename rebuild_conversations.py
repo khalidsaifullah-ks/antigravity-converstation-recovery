@@ -312,6 +312,14 @@ else:  # Linux and other POSIX systems
 DB_PATHS = _existing_paths(*_DB_CANDIDATES)
 BACKUP_FILENAME = "trajectorySummaries_backup.txt"
 
+def _find_brain_path(conversation_id):
+    """Return the first existing brain folder for this conversation across all locations."""
+    for brain_dir in _ALL_BRAIN_DIRS:
+        p = os.path.join(brain_dir, conversation_id)
+        if os.path.isdir(p):
+            return p
+    return None
+
 def main():
     _enable_ansi_and_colors()
     print(f"{CLR_BOLD}Initializing Antigravity Conversation Recovery Utility...{CLR_RESET}")
