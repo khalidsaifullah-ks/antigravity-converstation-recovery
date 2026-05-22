@@ -160,6 +160,17 @@ def _get_wsl_windows_appdata():
 
     return None
 
+def _first_existing(*candidates):
+    """Return the first path that exists on disk, or the first candidate if none exist."""
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return candidates[0]
+
+def _existing_paths(*candidates):
+    """Return all candidate paths that exist on disk, preserving order."""
+    return [p for p in candidates if p and os.path.exists(p)]
+
 def main():
     _enable_ansi_and_colors()
     print(f"{CLR_BOLD}Initializing Antigravity Conversation Recovery Utility...{CLR_RESET}")
