@@ -171,6 +171,147 @@ def _existing_paths(*candidates):
     """Return all candidate paths that exist on disk, preserving order."""
     return [p for p in candidates if p and os.path.exists(p)]
 
+if _SYSTEM == "Windows":
+    _appdata = os.path.expandvars(r"%APPDATA%")
+    _profile = os.path.expandvars(r"%USERPROFILE%")
+    _gemini = os.path.join(_profile, ".gemini")
+
+    _DB_CANDIDATES = (
+        os.path.join(_appdata, "Antigravity IDE", "User", "globalStorage", "state.vscdb"),
+        os.path.join(_appdata, "antigravity", "User", "globalStorage", "state.vscdb"),
+        os.path.join(_appdata, "Antigravity", "User", "globalStorage", "state.vscdb"),
+    )
+    DB_PATH = _first_existing(*_DB_CANDIDATES)
+    CONVERSATIONS_DIR = _first_existing(
+        os.path.join(_gemini, "antigravity-ide", "conversations"),
+        os.path.join(_gemini, "antigravity", "conversations"),
+    )
+    BRAIN_DIR = _first_existing(
+        os.path.join(_gemini, "antigravity-ide", "brain"),
+        os.path.join(_gemini, "antigravity", "brain"),
+    )
+    WORKSPACE_STORAGE_DIR = _first_existing(
+        os.path.join(_appdata, "Antigravity IDE", "User", "workspaceStorage"),
+        os.path.join(_appdata, "antigravity", "User", "workspaceStorage"),
+    )
+    _ALL_CONV_DIRS = [
+        os.path.join(_gemini, "antigravity-ide", "conversations"),
+        os.path.join(_gemini, "antigravity", "conversations"),
+        os.path.join(_gemini, "antigravity-backup", "conversations"),
+    ]
+    _ALL_BRAIN_DIRS = [
+        os.path.join(_gemini, "antigravity-ide", "brain"),
+        os.path.join(_gemini, "antigravity", "brain"),
+        os.path.join(_gemini, "antigravity-backup", "brain"),
+    ]
+elif _IS_WSL:
+    _wsl_appdata = _get_wsl_windows_appdata()
+    _home = os.path.expanduser("~")
+
+    if _wsl_appdata:
+        _DB_CANDIDATES = (
+            os.path.join(_wsl_appdata, "Antigravity IDE", "User", "globalStorage", "state.vscdb"),
+            os.path.join(_wsl_appdata, "antigravity", "User", "globalStorage", "state.vscdb"),
+            os.path.join(_wsl_appdata, "Antigravity", "User", "globalStorage", "state.vscdb"),
+        )
+        DB_PATH = _first_existing(*_DB_CANDIDATES)
+        WORKSPACE_STORAGE_DIR = _first_existing(
+            os.path.join(_wsl_appdata, "Antigravity IDE", "User", "workspaceStorage"),
+            os.path.join(_wsl_appdata, "antigravity", "User", "workspaceStorage"),
+            os.path.join(_wsl_appdata, "Antigravity", "User", "workspaceStorage"),
+        )
+    else:
+        _DB_CANDIDATES = ()
+        DB_PATH = ""
+        WORKSPACE_STORAGE_DIR = ""
+
+    CONVERSATIONS_DIR = _first_existing(
+        os.path.join(_home, ".gemini", "antigravity-ide", "conversations"),
+        os.path.join(_home, ".gemini", "antigravity", "conversations"),
+    )
+    BRAIN_DIR = _first_existing(
+        os.path.join(_home, ".gemini", "antigravity-ide", "brain"),
+        os.path.join(_home, ".gemini", "antigravity", "brain"),
+    )
+    _gemini_wsl = os.path.join(_home, ".gemini")
+    _ALL_CONV_DIRS = [
+        os.path.join(_gemini_wsl, "antigravity-ide", "conversations"),
+        os.path.join(_gemini_wsl, "antigravity", "conversations"),
+        os.path.join(_gemini_wsl, "antigravity-backup", "conversations"),
+    ]
+    _ALL_BRAIN_DIRS = [
+        os.path.join(_gemini_wsl, "antigravity-ide", "brain"),
+        os.path.join(_gemini_wsl, "antigravity", "brain"),
+        os.path.join(_gemini_wsl, "antigravity-backup", "brain"),
+    ]
+elif _SYSTEM == "Darwin":  # macOS
+    _home = os.path.expanduser("~")
+    _support = os.path.join(_home, "Library", "Application Support")
+
+    _DB_CANDIDATES = (
+        os.path.join(_support, "Antigravity IDE", "User", "globalStorage", "state.vscdb"),
+        os.path.join(_support, "antigravity", "User", "globalStorage", "state.vscdb"),
+    )
+    DB_PATH = _first_existing(*_DB_CANDIDATES)
+    CONVERSATIONS_DIR = _first_existing(
+        os.path.join(_home, ".gemini", "antigravity-ide", "conversations"),
+        os.path.join(_home, ".gemini", "antigravity", "conversations"),
+    )
+    BRAIN_DIR = _first_existing(
+        os.path.join(_home, ".gemini", "antigravity-ide", "brain"),
+        os.path.join(_home, ".gemini", "antigravity", "brain"),
+    )
+    WORKSPACE_STORAGE_DIR = _first_existing(
+        os.path.join(_support, "Antigravity IDE", "User", "workspaceStorage"),
+        os.path.join(_support, "antigravity", "User", "workspaceStorage"),
+    )
+    _gemini_mac = os.path.join(_home, ".gemini")
+    _ALL_CONV_DIRS = [
+        os.path.join(_gemini_mac, "antigravity-ide", "conversations"),
+        os.path.join(_gemini_mac, "antigravity", "conversations"),
+        os.path.join(_gemini_mac, "antigravity-backup", "conversations"),
+    ]
+    _ALL_BRAIN_DIRS = [
+        os.path.join(_gemini_mac, "antigravity-ide", "brain"),
+        os.path.join(_gemini_mac, "antigravity", "brain"),
+        os.path.join(_gemini_mac, "antigravity-backup", "brain"),
+    ]
+else:  # Linux and other POSIX systems
+    _home = os.path.expanduser("~")
+    _config = os.path.join(_home, ".config")
+
+    _DB_CANDIDATES = (
+        os.path.join(_config, "Antigravity IDE", "User", "globalStorage", "state.vscdb"),
+        os.path.join(_config, "Antigravity", "User", "globalStorage", "state.vscdb"),
+    )
+    DB_PATH = _first_existing(*_DB_CANDIDATES)
+    CONVERSATIONS_DIR = _first_existing(
+        os.path.join(_home, ".gemini", "antigravity-ide", "conversations"),
+        os.path.join(_home, ".gemini", "antigravity", "conversations"),
+    )
+    BRAIN_DIR = _first_existing(
+        os.path.join(_home, ".gemini", "antigravity-ide", "brain"),
+        os.path.join(_home, ".gemini", "antigravity", "brain"),
+    )
+    WORKSPACE_STORAGE_DIR = _first_existing(
+        os.path.join(_config, "Antigravity IDE", "User", "workspaceStorage"),
+        os.path.join(_config, "Antigravity", "User", "workspaceStorage"),
+    )
+    _gemini_linux = os.path.join(_home, ".gemini")
+    _ALL_CONV_DIRS = [
+        os.path.join(_gemini_linux, "antigravity-ide", "conversations"),
+        os.path.join(_gemini_linux, "antigravity", "conversations"),
+        os.path.join(_gemini_linux, "antigravity-backup", "conversations"),
+    ]
+    _ALL_BRAIN_DIRS = [
+        os.path.join(_gemini_linux, "antigravity-ide", "brain"),
+        os.path.join(_gemini_linux, "antigravity", "brain"),
+        os.path.join(_gemini_linux, "antigravity-backup", "brain"),
+    ]
+
+DB_PATHS = _existing_paths(*_DB_CANDIDATES)
+BACKUP_FILENAME = "trajectorySummaries_backup.txt"
+
 def main():
     _enable_ansi_and_colors()
     print(f"{CLR_BOLD}Initializing Antigravity Conversation Recovery Utility...{CLR_RESET}")
