@@ -320,6 +320,31 @@ def _find_brain_path(conversation_id):
             return p
     return None
 
+def _collect_all_conversations():
+    """
+    Merge conversation files from all folders (new, old, backup).
+    Supports both .pb (protobuf, legacy) and .db (SQLite, v2.x+) formats.
+    Deduplicates by conversation ID — first seen wins (priority: new > old > backup).
+    Returns dict: {conversation_id: full_file_path}
+    """
+    catalog = {}
+    for conv_dir in _ALL_CONV_DIRS:
+        if not os.path.isdir(conv_dir):
+            continue
+        try:
+            for name in os.listdir(conv_dir):
+                if name.endswith(".pb"):
+                    cid = name[:-3]
+                elif name.endswith(".db") and not name.endswith((".db-shm", ".db-wal")):
+                    cid = name[:-3]
+                else:
+                    continue
+                if cid not in catalog:
+                    catalog[cid] = os.path.join(conv_dir, name)
+        except Exception:
+            pass
+    return catalog
+
 def main():
     _enable_ansi_and_colors()
     print(f"{CLR_BOLD}Initializing Antigravity Conversation Recovery Utility...{CLR_RESET}")
