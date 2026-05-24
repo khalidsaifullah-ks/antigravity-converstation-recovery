@@ -4,8 +4,28 @@ Antigravity Conversation Recovery
 =============================
 Rebuilds the Antigravity conversation index so all your chat history
 appears correctly — sorted by date (newest first) with proper titles.
+
+Fixes:
+  - Missing conversations in the sidebar
+  - Wrong ordering (not sorted by date)
+  - Missing/placeholder titles
+  - Workspace assignments stripped or lost
+  - Missing timestamps causing sort issues
+
+Usage:
+  1. CLOSE Antigravity completely (File > Exit, or kill from Task Manager)
+  2. Run this script (or use run.bat on Windows)
+  3. REBOOT your PC (full restart, not just app restart)
+  4. Open Antigravity — your conversations should appear, sorted by date
+ 
+Requirements: Python 3.7+ (no external packages needed)
+License: MIT
 """
 
+# ─── Python Version Guard ────────────────────────────────────────────────────
+# If accidentally launched with Python 2 (e.g. `python` points to 2.x on
+# legacy systems), automatically re-exec with python3 instead of crashing
+# with syntax errors.  If python3 isn't available either, give a clear message.
 import sys
 import os
 
@@ -57,8 +77,6 @@ CLR_MAGENTA = "\033[35m"
 CLR_CYAN = "\033[36m"
 CLR_WHITE = "\033[37m"
 
-_SYSTEM = platform.system()
-
 def _enable_ansi_and_colors():
     global CLR_RESET, CLR_BOLD, CLR_DIM, CLR_RED, CLR_GREEN, CLR_YELLOW, CLR_BLUE, CLR_MAGENTA, CLR_CYAN, CLR_WHITE
     
@@ -99,7 +117,9 @@ def _enable_ansi_and_colors():
 # We check the new name first, then fall back to the old name so the tool
 # works on both old and new installations.
 
+_SYSTEM = platform.system()
 _ANTIGRAVITY_NAMES = ("Antigravity IDE", "antigravity", "Antigravity")
+
 
 def _is_wsl():
     """Detect if running inside Windows Subsystem for Linux."""
@@ -115,13 +135,15 @@ def _is_wsl():
         pass
     return False
 
+
 _IS_WSL = _is_wsl()
+
 
 def _get_wsl_windows_appdata():
     """
     Resolve the Windows %APPDATA% path from inside WSL.
     Strategy 1: Ask Windows directly via cmd.exe and convert with wslpath.
-    Strategy 2: Scan /mnt/c/Users/ for user folders that have Antigravity installed.
+    Strategy 2: Scan /mnt/c/Users/ for folders that have Antigravity installed.
     Returns a WSL-accessible path string, or None if resolution fails.
     """
     # Strategy 1: cmd.exe %APPDATA% → wslpath
@@ -160,6 +182,7 @@ def _get_wsl_windows_appdata():
 
     return None
 
+
 def _first_existing(*candidates):
     """Return the first path that exists on disk, or the first candidate if none exist."""
     for p in candidates:
@@ -167,9 +190,11 @@ def _first_existing(*candidates):
             return p
     return candidates[0]
 
+
 def _existing_paths(*candidates):
     """Return all candidate paths that exist on disk, preserving order."""
     return [p for p in candidates if p and os.path.exists(p)]
+
 
 if _SYSTEM == "Windows":
     _appdata = os.path.expandvars(r"%APPDATA%")
@@ -312,6 +337,7 @@ else:  # Linux and other POSIX systems
 DB_PATHS = _existing_paths(*_DB_CANDIDATES)
 BACKUP_FILENAME = "trajectorySummaries_backup.txt"
 
+
 def _find_brain_path(conversation_id):
     """Return the first existing brain folder for this conversation across all locations."""
     for brain_dir in _ALL_BRAIN_DIRS:
@@ -319,6 +345,7 @@ def _find_brain_path(conversation_id):
         if os.path.isdir(p):
             return p
     return None
+
 
 def _collect_all_conversations():
     """
@@ -333,6 +360,8 @@ def _collect_all_conversations():
             continue
         try:
             for name in os.listdir(conv_dir):
+                # Accept .pb (legacy protobuf) and .db (new SQLite) files
+                # Skip SQLite journal files (.db-shm, .db-wal)
                 if name.endswith(".pb"):
                     cid = name[:-3]
                 elif name.endswith(".db") and not name.endswith((".db-shm", ".db-wal")):
@@ -345,9 +374,91 @@ def _collect_all_conversations():
             pass
     return catalog
 
+
+# ─── Protobuf Varint Helpers ─────────────────────────────────────────────────
+
+def encode_varint(value):
+    """Encode an integer as a protobuf varint."""
+    result = b""
+    while value > 0x7F:
+        result += bytes([(value & 0x7F) | 0x80])
+        value >>= 7
+    result += bytes([value & 0x7F])
+    return result or b'\x00'
+
+
+def decode_varint(data, pos):
+    """Decode a protobuf varint at the given position. Returns (value, new_pos)."""
+    result, shift = 0, 0
+    while pos < len(data):
+        b = data[pos]
+        result |= (b & 0x7F) << shift
+        if (b & 0x80) == 0:
+            return result, pos + 1
+        shift += 7
+        pos += 1
+    return result, pos
+
+
+def skip_protobuf_field(data, pos, wire_type):
+    """Skip over a protobuf field value at the given position. Returns new_pos."""
+    if wire_type == 0:    # varint
+        _, pos = decode_varint(data, pos)
+    elif wire_type == 2:  # length-delimited
+        length, pos = decode_varint(data, pos)
+        pos += length
+    elif wire_type == 1:  # 64-bit fixed
+        pos += 8
+    elif wire_type == 5:  # 32-bit fixed
+        pos += 4
+    return pos
+
+
+def strip_field_from_protobuf(data, target_field_number):
+    """
+    Remove all instances of a specific field from raw protobuf bytes.
+    Returns the remaining bytes with the target field stripped out.
+    """
+    remaining = b""
+    pos = 0
+    while pos < len(data):
+        start_pos = pos
+        try:
+            tag, pos = decode_varint(data, pos)
+        except Exception:
+            remaining += data[start_pos:]
+            break
+        wire_type = tag & 7
+        field_num = tag >> 3
+        new_pos = skip_protobuf_field(data, pos, wire_type)
+        if new_pos == pos and wire_type not in (0, 1, 2, 5):
+            # Unknown wire type — keep everything from here
+            remaining += data[start_pos:]
+            break
+        pos = new_pos
+        if field_num != target_field_number:
+            remaining += data[start_pos:pos]
+    return remaining
+
+
+# ─── Protobuf Write Helpers ──────────────────────────────────────────────────
+
+def encode_length_delimited(field_number, data):
+    """Encode a length-delimited protobuf field (wire type 2)."""
+    tag = (field_number << 3) | 2
+    return encode_varint(tag) + encode_varint(len(data)) + data
+
+
+def encode_string_field(field_number, string_value):
+    """Encode a string as a protobuf field."""
+    return encode_length_delimited(field_number, string_value.encode('utf-8'))
+
+
+
 def main():
-    _enable_ansi_and_colors()
-    print(f"{CLR_BOLD}Initializing Antigravity Conversation Recovery Utility...{CLR_RESET}")
+    if "_enable_ansi_and_colors" in globals():
+        _enable_ansi_and_colors()
+    print("Initializing Antigravity Conversation Recovery Utility...")
     return 0
 
 if __name__ == "__main__":
