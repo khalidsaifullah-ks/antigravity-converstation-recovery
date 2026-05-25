@@ -454,6 +454,100 @@ def encode_string_field(field_number, string_value):
     return encode_length_delimited(field_number, string_value.encode('utf-8'))
 
 
+# ─── Workspace Helpers ───────────────────────────────────────────────────────
+
+def _is_remote_uri(path_or_uri):
+    """Check if a string is already a remote/absolute URI (not a local path)."""
+    return path_or_uri.startswith("vscode-remote://") or path_or_uri.startswith("file:///")
+
+
+def path_to_workspace_uri(folder_path):
+    """
+    Convert a local folder path to a file:/// URI matching Antigravity's format.
+    Passes through remote URIs (vscode-remote://, file:///) unchanged.
+    Uses raw paths (no URL-encoding) for clean display in Antigravity's sidebar.
+    Example: D:\\Repos\\My Project  →  file:///d:/Repos/My Project
+    WSL:     /mnt/c/Users/name/Project → file:///c:/Users/name/Project
+    """
+    # Pass through URIs that are already in the correct format
+    if _is_remote_uri(folder_path):
+        return folder_path
+
+    # WSL: convert /mnt/<drive>/... to file:///<drive>:/...
+    if _IS_WSL and folder_path.startswith("/mnt/"):
+        parts = folder_path.split("/")
+        if len(parts) >= 3 and len(parts[2]) == 1:
+            drive = parts[2].lower()
+            rest = "/".join(parts[3:])
+            return f"file:///{drive}:/{rest}"
+
+    p = folder_path.replace("\\", "/")
+    if len(p) >= 2 and p[1] == ":":
+        drive = p[0].lower()
+        rest = p[2:]
+    else:
+        drive = None
+        rest = p
+
+    if drive:
+        return f"file:///{drive}:{rest}"
+    else:
+        return f"file:///{rest.lstrip('/')}"
+
+
+def build_workspace_field(folder_path):
+    """
+    Build protobuf field 9 (workspace sub-message) from a filesystem path.
+    Sub-message structure:
+      sub-field 1 (string) = workspace URI
+      sub-field 2 (string) = workspace URI (duplicate)
+    Returns raw bytes for one field-9 entry.
+    """
+    uri = path_to_workspace_uri(folder_path)
+    sub_msg = (
+        encode_string_field(1, uri)
+        + encode_string_field(2, uri)
+    )
+    return encode_length_delimited(9, sub_msg)
+
+
+def extract_workspace_hint(inner_blob):
+    """
+    Try to extract a workspace URI from the protobuf inner blob.
+    Scans length-delimited fields for strings matching file:/// or
+    vscode-remote:// patterns. Returns the URI string if found, or None.
+    """
+    if not inner_blob:
+        return None
+    try:
+        pos = 0
+        while pos < len(inner_blob):
+            tag, pos = decode_varint(inner_blob, pos)
+            wire_type = tag & 7
+            field_num = tag >> 3
+            if wire_type == 2:
+                l, pos = decode_varint(inner_blob, pos)
+                content = inner_blob[pos:pos + l]
+                pos += l
+                if field_num > 1:
+                    try:
+                        text = content.decode("utf-8", errors="strict")
+                        if "file:///" in text or "vscode-remote://" in text:
+                            return text
+                    except Exception:
+                        pass
+            elif wire_type == 0:
+                _, pos = decode_varint(inner_blob, pos)
+            elif wire_type == 1:
+                pos += 8
+            elif wire_type == 5:
+                pos += 4
+            else:
+                break
+    except Exception:
+        pass
+    return None
+
 
 def main():
     if "_enable_ansi_and_colors" in globals():
