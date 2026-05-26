@@ -549,6 +549,54 @@ def extract_workspace_hint(inner_blob):
     return None
 
 
+def load_known_workspace_uris():
+    """
+    Load all known workspace URIs from Antigravity's workspaceStorage.
+    Each subfolder contains a workspace.json with a 'folder' or 'workspace' URI.
+    Returns a list of URI strings sorted longest-first for prefix matching.
+    """
+    uris = []
+    if not os.path.isdir(WORKSPACE_STORAGE_DIR):
+        return uris
+    try:
+        for name in os.listdir(WORKSPACE_STORAGE_DIR):
+            ws_json = os.path.join(WORKSPACE_STORAGE_DIR, name, "workspace.json")
+            if os.path.exists(ws_json):
+                try:
+                    with open(ws_json, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    uri = data.get("folder") or data.get("workspace")
+                    if uri:
+                        uris.append(uri)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    # Sort longest first so more-specific paths match before parent paths
+    uris.sort(key=len, reverse=True)
+    return uris
+
+
+def _uri_to_local_path(file_uri):
+    """
+    Convert a file:/// URI to a local filesystem path.
+    Handles URL-encoding (e.g. %20 -> space, %3A -> colon).
+    On WSL, converts file:///C:/... to /mnt/c/...
+    Returns None for non-file URIs.
+    """
+    if not file_uri.startswith("file:///"):
+        return None
+    raw = unquote(file_uri[len("file://"):])
+    # On Windows, file:///C:/... -> C:/...
+    if _SYSTEM == "Windows" and len(raw) >= 3 and raw[0] == '/' and raw[2] == ':':
+        raw = raw[1:]  # strip leading /
+    # On WSL, file:///C:/... -> /mnt/c/...
+    elif _IS_WSL and len(raw) >= 3 and raw[0] == '/' and raw[2] == ':':
+        drive = raw[1].lower()
+        raw = f"/mnt/{drive}{raw[3:]}"
+    return raw
+
+
 def main():
     if "_enable_ansi_and_colors" in globals():
         _enable_ansi_and_colors()
