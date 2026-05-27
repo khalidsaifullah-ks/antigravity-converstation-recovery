@@ -743,6 +743,92 @@ def has_timestamp_fields(inner_blob):
     return False
 
 
+# ─── Interactive Workspace Assignment ────────────────────────────────────────
+
+def _prompt_valid_folder(prompt_text):
+    """Keep asking for a folder until user gives a valid one or presses Enter."""
+    while True:
+        raw = input(prompt_text).strip()
+        if raw == "":
+            return None
+        folder = raw.strip('"').strip("'").rstrip("\\/")
+        # Accept remote URIs without filesystem validation
+        if _is_remote_uri(folder):
+            print(f"    + Mapped remote URI: {folder}")
+            return folder
+        if os.path.isdir(folder):
+            print(f"    + Mapped to {folder}")
+            return folder
+        else:
+            print(f"    x Path not found: {folder}")
+            print(f"      (Make sure the folder exists. Try again or press Enter to skip)")
+
+
+def interactive_workspace_assignment(unmapped_entries):
+    """
+    Show unmapped conversations and let user assign workspace paths.
+    unmapped_entries: list of (index, conversation_id, title)
+    Returns dict: {conversation_id: folder_path}
+    """
+    if not unmapped_entries:
+        return {}
+
+    print()
+    print("  " + f"{CLR_CYAN}=" * 58 + CLR_RESET)
+    print(f"  {CLR_BOLD}{CLR_WHITE}WORKSPACE ASSIGNMENT (optional){CLR_RESET}")
+    print("  " + f"{CLR_CYAN}=" * 58 + CLR_RESET)
+    print(f"  {CLR_BOLD}{CLR_YELLOW}{len(unmapped_entries)}{CLR_RESET} conversation(s) have no workspace.")
+    print("  You can assign each to a workspace folder now,")
+    print("  or press Enter to skip and leave them unassigned.")
+    print()
+
+    assignments = {}
+    batch_path = None
+
+    for idx, cid, title in unmapped_entries:
+        if batch_path:
+            assignments[cid] = batch_path
+            print(f"    [{CLR_CYAN}{idx:3d}{CLR_RESET}] {title[:45]}  -> {os.path.basename(batch_path)}")
+            continue
+
+        print(f"  [{CLR_CYAN}{idx:3d}{CLR_RESET}] {CLR_BOLD}{title[:55]}{CLR_RESET}")
+        while True:
+            raw = input(f"    {CLR_BOLD}Workspace path (Enter=skip, 'all'=batch, 'q'=stop): {CLR_RESET}").strip()
+            if raw == "":
+                print(f"    {CLR_DIM}Skipped.{CLR_RESET}")
+                break
+            if raw.lower() == "q":
+                print(f"    {CLR_YELLOW}Stopped — remaining conversations left unmapped.{CLR_RESET}")
+                return assignments
+            if raw.lower() == "all":
+                folder = _prompt_valid_folder(f"    {CLR_BOLD}Path for ALL remaining (Enter=cancel): {CLR_RESET}")
+                if folder is None:
+                    continue
+                batch_path = folder
+                assignments[cid] = folder
+                break
+            # Normal path entry
+            folder = raw.strip('"').strip("'").rstrip("\\/")
+            # Accept remote URIs without filesystem validation
+            if _is_remote_uri(folder):
+                print(f"    + Mapped remote URI: {folder}")
+                assignments[cid] = folder
+                break
+            if os.path.isdir(folder):
+                print(f"    + Mapped to {folder}")
+                assignments[cid] = folder
+                break
+            else:
+                print(f"    x Path not found: {folder}")
+                print(f"      (Try again or press Enter to skip)")
+
+    if assignments:
+        print()
+        print(f"  + Assigned workspace to {len(assignments)} conversation(s)")
+    print()
+    return assignments
+
+
 
 def main():
     if "_enable_ansi_and_colors" in globals():
