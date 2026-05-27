@@ -707,6 +707,43 @@ def infer_workspace_from_brain(conversation_id, known_ws_uris=None):
         return best
     return best.replace("/", os.sep)
 
+
+# ─── Timestamp Helpers ───────────────────────────────────────────────────────
+
+def build_timestamp_fields(epoch_seconds):
+    """
+    Build protobuf timestamp fields 3, 7, and 10 from an epoch timestamp.
+    Each is a sub-message with: sub-field 1 (varint) = seconds since epoch.
+    Returns raw protobuf bytes containing all three fields.
+    """
+    seconds = int(epoch_seconds)
+    ts_inner = encode_varint((1 << 3) | 0) + encode_varint(seconds)
+    return (
+        encode_length_delimited(3, ts_inner)
+        + encode_length_delimited(7, ts_inner)
+        + encode_length_delimited(10, ts_inner)
+    )
+
+
+def has_timestamp_fields(inner_blob):
+    """Check if the inner blob already contains timestamp fields (3, 7, or 10)."""
+    if not inner_blob:
+        return False
+    try:
+        pos = 0
+        while pos < len(inner_blob):
+            tag, pos = decode_varint(inner_blob, pos)
+            fn = tag >> 3
+            wt = tag & 7
+            if fn in (3, 7, 10):
+                return True
+            pos = skip_protobuf_field(inner_blob, pos, wt)
+    except Exception:
+        pass
+    return False
+
+
+
 def main():
     if "_enable_ansi_and_colors" in globals():
         _enable_ansi_and_colors()
