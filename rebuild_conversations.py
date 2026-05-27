@@ -597,6 +597,116 @@ def _uri_to_local_path(file_uri):
     return raw
 
 
+def infer_workspace_from_brain(conversation_id, known_ws_uris=None):
+    """
+    Scan brain .md files for file:/// and vscode-remote:// paths and infer
+    the workspace by matching against known workspace URIs.
+    Falls back to a heuristic depth-based approach if no known URIs match.
+    Returns a filesystem path string, a remote URI string, or None.
+    """
+    brain_path = _find_brain_path(conversation_id)
+    if not brain_path:
+        return None
+
+    # Two separate patterns: local file:/// and remote vscode-remote://
+    if _SYSTEM == "Windows":
+        local_pattern = re.compile(r"file:///([A-Za-z](?:%3A|:)/[^)\s\"'\]>]+)")
+    else:
+        local_pattern = re.compile(r"file:///([^)\s\"'\]>]+)")
+    remote_pattern = re.compile(r"(vscode-remote://[^)\s\"'\]>]+)")
+
+    # Collect all file URIs found in brain .md files
+    found_uris = []     # full file:/// URIs
+    found_remote = []   # full vscode-remote:// URIs
+
+    try:
+        for name in os.listdir(brain_path):
+            if not name.endswith(".md") or name.startswith("."):
+                continue
+            filepath = os.path.join(brain_path, name)
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read(16384)
+
+                for match in remote_pattern.finditer(content):
+                    found_remote.append(match.group(1))
+
+                for match in local_pattern.finditer(content):
+                    found_uris.append("file:///" + match.group(1))
+            except Exception:
+                pass
+    except Exception:
+        return None
+
+    if not found_uris and not found_remote:
+        return None
+
+    # ── Strategy 1: Match against known workspace URIs (preferred) ────────
+    if known_ws_uris:
+        ws_counts = {}
+        for file_uri in found_uris:
+            normalized = file_uri.replace("%3A", ":").replace("%3a", ":")
+            normalized = normalized.replace("%20", " ")
+            for ws_uri in known_ws_uris:
+                ws_norm = ws_uri.replace("%3A", ":").replace("%3a", ":")
+                ws_norm = ws_norm.replace("%20", " ")
+                if normalized.startswith(ws_norm + "/") or normalized == ws_norm:
+                    ws_counts[ws_uri] = ws_counts.get(ws_uri, 0) + 1
+                    break  # matched most-specific (sorted longest-first)
+
+        for remote_uri in found_remote:
+            for ws_uri in known_ws_uris:
+                if remote_uri.startswith(ws_uri + "/") or remote_uri == ws_uri:
+                    ws_counts[ws_uri] = ws_counts.get(ws_uri, 0) + 1
+                    break
+
+        if ws_counts:
+            best_ws_uri = max(ws_counts, key=ws_counts.get)
+            local = _uri_to_local_path(best_ws_uri)
+            if local:
+                return local
+            return best_ws_uri
+
+    # ── Strategy 2: Fallback — heuristic depth-based approach ─────────────
+    path_counts = {}
+    for file_uri in found_uris:
+        raw = file_uri[len("file:///"):]
+        raw = raw.replace("%3A", ":").replace("%3a", ":")
+        raw = raw.replace("%20", " ")
+
+        # WSL: normalize Windows drive letters in URIs to /mnt/ paths
+        if _IS_WSL and len(raw) >= 2 and raw[1] == ':':
+            drive = raw[0].lower()
+            raw = f"mnt/{drive}/{raw[3:]}"
+
+        parts = raw.replace("\\", "/").split("/")
+        # On Windows paths like C:/Users/name/Desktop/Project → 5 segments.
+        # On WSL paths like mnt/c/Users/name/Project → 5 segments.
+        # On Linux/Mac like home/user/projects/Project → 4 segments + re-add /.
+        if _SYSTEM == "Windows":
+            depth = 5
+        elif _IS_WSL and raw.startswith("mnt/"):
+            depth = 5
+        else:
+            depth = 4
+        if len(parts) >= depth:
+            ws = "/".join(parts[:depth])
+            if _SYSTEM != "Windows" and not ws.startswith("/"):
+                ws = "/" + ws
+            path_counts[ws] = path_counts.get(ws, 0) + 1
+
+    for remote_uri in found_remote:
+        path_counts[remote_uri] = path_counts.get(remote_uri, 0) + 1
+
+    if not path_counts:
+        return None
+
+    best = max(path_counts, key=path_counts.get)
+    # Remote URIs are returned as-is; local paths get OS-native separators
+    if best.startswith("vscode-remote://"):
+        return best
+    return best.replace("/", os.sep)
+
 def main():
     if "_enable_ansi_and_colors" in globals():
         _enable_ansi_and_colors()
