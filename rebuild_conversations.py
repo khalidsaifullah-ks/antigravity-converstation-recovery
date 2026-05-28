@@ -829,6 +829,105 @@ def interactive_workspace_assignment(unmapped_entries):
     return assignments
 
 
+# ─── Metadata Extraction ─────────────────────────────────────────────────────
+
+def extract_existing_metadata(db_path):
+    """
+    Read metadata already stored in the database's trajectory data.
+    Returns two dicts:
+      - titles:      {conversation_id: title}  (real, non-fallback titles)
+      - inner_blobs: {conversation_id: raw_inner_protobuf_bytes}
+    The inner_blobs contain workspace URIs, timestamps, tool state, etc.
+    These are preserved so re-running the script doesn't lose data.
+    """
+    titles = {}
+    inner_blobs = {}
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT value FROM ItemTable "
+            "WHERE key='antigravityUnifiedStateSync.trajectorySummaries'"
+        )
+        row = cur.fetchone()
+        conn.close()
+
+        if not row or not row[0]:
+            return titles, inner_blobs
+
+        decoded = base64.b64decode(row[0])
+        pos = 0
+
+        while pos < len(decoded):
+            tag, pos = decode_varint(decoded, pos)
+            wire_type = tag & 7
+
+            if wire_type != 2:
+                break
+
+            length, pos = decode_varint(decoded, pos)
+            entry = decoded[pos:pos + length]
+            pos += length
+
+            # Parse each entry for UUID (field 1) and info blob (field 2)
+            ep, uid, info_b64 = 0, None, None
+            while ep < len(entry):
+                t, ep = decode_varint(entry, ep)
+                fn, wt = t >> 3, t & 7
+                if wt == 2:
+                    l, ep = decode_varint(entry, ep)
+                    content = entry[ep:ep + l]
+                    ep += l
+                    if fn == 1:
+                        uid = content.decode('utf-8', errors='replace')
+                    elif fn == 2:
+                        sp = 0
+                        _, sp = decode_varint(content, sp)
+                        sl, sp = decode_varint(content, sp)
+                        info_b64 = content[sp:sp + sl].decode('utf-8', errors='replace')
+                elif wt == 0:
+                    _, ep = decode_varint(entry, ep)
+                else:
+                    break
+
+            if uid and info_b64:
+                try:
+                    raw_inner = base64.b64decode(info_b64)
+                    inner_blobs[uid] = raw_inner
+
+                    ip = 0
+                    _, ip = decode_varint(raw_inner, ip)
+                    il, ip = decode_varint(raw_inner, ip)
+                    title = raw_inner[ip:ip + il].decode('utf-8', errors='replace')
+                    if not title.startswith("Conversation (") and not title.startswith("Conversation "):
+                        titles[uid] = title
+                except Exception:
+                    pass
+
+    except Exception:
+        pass
+
+    return titles, inner_blobs
+
+
+def extract_existing_metadata_from_paths(db_paths):
+    """
+    Read metadata from ALL existing Antigravity databases.
+    First DB wins for each conversation ID, so metadata is not overwritten
+    by a later DB that might have stale data.
+    """
+    merged_titles = {}
+    merged_inner_blobs = {}
+    for db_path in db_paths:
+        titles, inner_blobs = extract_existing_metadata(db_path)
+        for cid, title in titles.items():
+            if cid not in merged_titles:
+                merged_titles[cid] = title
+        for cid, blob in inner_blobs.items():
+            if cid not in merged_inner_blobs:
+                merged_inner_blobs[cid] = blob
+    return merged_titles, merged_inner_blobs
+
 
 def main():
     if "_enable_ansi_and_colors" in globals():
