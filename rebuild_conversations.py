@@ -929,6 +929,41 @@ def extract_existing_metadata_from_paths(db_paths):
     return merged_titles, merged_inner_blobs
 
 
+def write_index_to_database(db_path, encoded_value, backup_suffix):
+    """Back up and write the rebuilt trajectory index into one state.vscdb."""
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT value FROM ItemTable "
+        "WHERE key='antigravityUnifiedStateSync.trajectorySummaries'"
+    )
+    row = cur.fetchone()
+
+    backup_name = f"trajectorySummaries_backup_{backup_suffix}.txt" if backup_suffix else BACKUP_FILENAME
+    backup_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), backup_name)
+    if row and row[0]:
+        with open(backup_path, 'w', encoding='utf-8') as f:
+            f.write(row[0])
+
+    if row:
+        cur.execute(
+            "UPDATE ItemTable SET value=? "
+            "WHERE key='antigravityUnifiedStateSync.trajectorySummaries'",
+            (encoded_value,)
+        )
+    else:
+        cur.execute(
+            "INSERT INTO ItemTable (key, value) "
+            "VALUES ('antigravityUnifiedStateSync.trajectorySummaries', ?)",
+            (encoded_value,)
+        )
+
+    conn.commit()
+    conn.close()
+    return backup_name if row and row[0] else None
+
+
 def main():
     if "_enable_ansi_and_colors" in globals():
         _enable_ansi_and_colors()
