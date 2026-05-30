@@ -964,6 +964,62 @@ def write_index_to_database(db_path, encoded_value, backup_suffix):
     return backup_name if row and row[0] else None
 
 
+def get_title_from_brain(conversation_id):
+    """
+    Try to extract a title from brain artifact .md files.
+    Returns the first markdown heading found, or None.
+    """
+    brain_path = _find_brain_path(conversation_id)
+    if not brain_path:
+        return None
+
+    for item in sorted(os.listdir(brain_path)):
+        if item.startswith('.') or not item.endswith('.md'):
+            continue
+        try:
+            filepath = os.path.join(brain_path, item)
+            with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                first_line = f.readline().strip()
+            if first_line.startswith('#'):
+                return first_line.lstrip('# ').strip()[:80]
+        except Exception:
+            pass
+
+    return None
+
+
+def resolve_title(conversation_id, existing_titles, pb_path=None):
+    """
+    Determine the best title for a conversation. Priority:
+      1. Existing title from database (canonical Antigravity title)
+      2. Brain artifact .md heading (fallback for new/missing conversations)
+      3. Fallback: date + short UUID
+    Returns (title, source) where source is 'preserved', 'brain', or 'fallback'.
+    """
+    # Prefer the canonical title Antigravity already has in the database
+    if conversation_id in existing_titles:
+        return existing_titles[conversation_id], "preserved"
+
+    # Fall back to brain artifact heading for conversations not yet indexed
+    brain_title = get_title_from_brain(conversation_id)
+    if brain_title:
+        return brain_title, "brain"
+
+    conv_file = pb_path
+    if not conv_file:
+        for conv_dir in _ALL_CONV_DIRS:
+            p = os.path.join(conv_dir, f"{conversation_id}.pb")
+            if os.path.exists(p):
+                conv_file = p
+                break
+    if conv_file and os.path.exists(conv_file):
+        mod_time = time.strftime("%b %d", time.localtime(os.path.getmtime(conv_file)))
+        return f"Conversation ({mod_time}) {conversation_id[:8]}", "fallback"
+
+    return f"Conversation {conversation_id[:8]}", "fallback"
+
+
+
 def main():
     if "_enable_ansi_and_colors" in globals():
         _enable_ansi_and_colors()
