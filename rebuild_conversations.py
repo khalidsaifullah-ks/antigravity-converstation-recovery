@@ -1019,6 +1019,55 @@ def resolve_title(conversation_id, existing_titles, pb_path=None):
     return f"Conversation {conversation_id[:8]}", "fallback"
 
 
+# ─── Protobuf Entry Builder ──────────────────────────────────────────────────
+
+def build_trajectory_entry(conversation_id, title, existing_inner_data=None,
+                           workspace_path=None, pb_mtime=None):
+    """
+    Build a single trajectory summary protobuf entry.
+
+    - If existing_inner_data is provided, title (field 1) is replaced but
+      ALL other fields (workspace, timestamps, tool state) are preserved.
+    - If workspace_path is provided and there is no existing workspace,
+      a workspace field (field 9) is injected.
+    - If pb_mtime is provided and timestamps are missing,
+      timestamp fields (3, 7, 10) are injected for proper sorting.
+    """
+    if existing_inner_data:
+        preserved_fields = strip_field_from_protobuf(existing_inner_data, 1)
+        inner_info = encode_string_field(1, title) + preserved_fields
+
+        # Decode %20/%3A in existing workspace URIs so folder names display
+        # correctly in Antigravity's sidebar (e.g. "Pine Script Project" not
+        # "Pine%20Script%20Project")
+        if not workspace_path:
+            existing_ws = extract_workspace_hint(inner_info)
+            if existing_ws and ("%20" in existing_ws or "%3A" in existing_ws or "%3a" in existing_ws):
+                decoded_ws = unquote(existing_ws)
+                inner_info = strip_field_from_protobuf(inner_info, 9)
+                inner_info += build_workspace_field(decoded_ws)
+
+        # Override workspace if user assigned a new one
+        if workspace_path:
+            # Strip old workspace (field 9) and inject the new one
+            inner_info = strip_field_from_protobuf(inner_info, 9)
+            inner_info += build_workspace_field(workspace_path)
+        # Inject timestamps if missing
+        if pb_mtime and not has_timestamp_fields(existing_inner_data):
+            inner_info += build_timestamp_fields(pb_mtime)
+    else:
+        inner_info = encode_string_field(1, title)
+        if workspace_path:
+            inner_info += build_workspace_field(workspace_path)
+        if pb_mtime:
+            inner_info += build_timestamp_fields(pb_mtime)
+
+    info_b64 = base64.b64encode(inner_info).decode('utf-8')
+    sub_message = encode_string_field(1, info_b64)
+
+    entry = encode_string_field(1, conversation_id)
+    entry += encode_length_delimited(2, sub_message)
+    return entry
 
 def main():
     if "_enable_ansi_and_colors" in globals():
