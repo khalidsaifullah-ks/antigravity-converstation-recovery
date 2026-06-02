@@ -49,6 +49,7 @@ _RELEASES_URL = f"https://github.com/{_GITHUB_REPO}/releases/latest"
 CLR_RESET = "\033[0m"
 CLR_BOLD = "\033[1m"
 CLR_DIM = "\033[2m"
+CLR_RED = "\033[31(m" # Note: small typo or different style if needed, we'll use normal colors
 CLR_RED = "\033[31m"
 CLR_GREEN = "\033[32m"
 CLR_YELLOW = "\033[33m"
@@ -857,7 +858,125 @@ def extract_existing_metadata_from_paths(db_paths):
                 merged_inner_blobs[cid] = blob
     return merged_titles, merged_inner_blobs
 
-def _auto_assign_workspaces():
+def write_index_to_database(db_path, encoded_value, backup_suffix):
+    """Back up and write the rebuilt trajectory index into one state.vscdb."""
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT value FROM ItemTable "
+        "WHERE key='antigravityUnifiedStateSync.trajectorySummaries'"
+    )
+    row = cur.fetchone()
+
+    backup_name = f"trajectorySummaries_backup_{backup_suffix}.txt" if backup_suffix else BACKUP_FILENAME
+    backup_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), backup_name)
+    if row and row[0]:
+        with open(backup_path, 'w', encoding='utf-8') as f:
+            f.write(row[0])
+
+    if row:
+        cur.execute(
+            "UPDATE ItemTable SET value=? "
+            "WHERE key='antigravityUnifiedStateSync.trajectorySummaries'",
+            (encoded_value,)
+        )
+    else:
+        cur.execute(
+            "INSERT INTO ItemTable (key, value) "
+            "VALUES ('antigravityUnifiedStateSync.trajectorySummaries', ?)",
+            (encoded_value,)
+        )
+
+    conn.commit()
+    conn.close()
+    return backup_name if row and row[0] else None
+
+def get_title_from_brain(conversation_id):
+    """
+    Try to extract a title from brain artifact .md files.
+    Returns the first markdown heading found, or None.
+    """
+    brain_path = _find_brain_path(conversation_id)
+    if not brain_path:
+        return None
+
+    for item in sorted(os.listdir(brain_path)):
+        if item.startswith('.') or not item.endswith('.md'):
+            continue
+        try:
+            filepath = os.path.join(brain_path, item)
+            with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                first_line = f.readline().strip()
+            if first_line.startswith('#'):
+                return first_line.lstrip('# ').strip()[:80]
+        except Exception:
+            pass
+
+    return None
+
+def resolve_title(conversation_id, existing_titles, pb_path=None):
+    """
+    Determine the best title for a conversation. Priority:
+      1. Existing title from database (canonical Antigravity title)
+      2. Brain artifact .md heading (fallback for new/missing conversations)
+      3. Fallback: date + short UUID
+    Returns (title, source) where source is 'preserved', 'brain', or 'fallback'.
+    """
+    if conversation_id in existing_titles:
+        return existing_titles[conversation_id], "preserved"
+
+    brain_title = get_title_from_brain(conversation_id)
+    if brain_title:
+        return brain_title, "brain"
+
+    conv_file = pb_path
+    if not conv_file:
+        for conv_dir in _ALL_CONV_DIRS:
+            p = os.path.join(conv_dir, f"{conversation_id}.pb")
+            if os.path.exists(p):
+                conv_file = p
+                break
+    if conv_file and os.path.exists(conv_file):
+        mod_time = time.strftime("%b %d", time.localtime(os.path.getmtime(conv_file)))
+        return f"Conversation ({mod_time}) {conversation_id[:8]}", "fallback"
+
+    return f"Conversation {conversation_id[:8]}", "fallback"
+
+def build_trajectory_entry(conversation_id, title, existing_inner_data=None,
+                           workspace_path=None, pb_mtime=None):
+    """Build a single trajectory summary protobuf entry."""
+    if existing_inner_data:
+        preserved_fields = strip_field_from_protobuf(existing_inner_data, 1)
+        inner_info = encode_string_field(1, title) + preserved_fields
+
+        if not workspace_path:
+            existing_ws = extract_workspace_hint(inner_info)
+            if existing_ws and ("%20" in existing_ws or "%3A" in existing_ws or "%3a" in existing_ws):
+                decoded_ws = unquote(existing_ws)
+                inner_info = strip_field_from_protobuf(inner_info, 9)
+                inner_info += build_workspace_field(decoded_ws)
+
+        if workspace_path:
+            inner_info = strip_field_from_protobuf(inner_info, 9)
+            inner_info += build_workspace_field(workspace_path)
+        if pb_mtime and not has_timestamp_fields(existing_inner_data):
+            inner_info += build_timestamp_fields(pb_mtime)
+    else:
+        inner_info = encode_string_field(1, title)
+        if workspace_path:
+            inner_info += build_workspace_field(workspace_path)
+        if pb_mtime:
+            inner_info += build_timestamp_fields(pb_mtime)
+
+    info_b64 = base64.b64encode(inner_info).decode('utf-8')
+    sub_message = encode_string_field(1, info_b64)
+
+    entry = encode_string_field(1, conversation_id)
+    entry += encode_length_delimited(2, sub_message)
+    return entry
+
+def check_for_updates():
     pass
 
 def main():
