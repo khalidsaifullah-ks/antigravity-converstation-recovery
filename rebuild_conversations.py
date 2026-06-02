@@ -1110,6 +1110,74 @@ def check_for_updates():
         pass  # No internet, API down, etc. — just continue silently
 
 
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+def print_logo():
+    raw_lines = [
+        "",
+        "     █████╗ ███╗   ██╗████████╗██╗ ██████╗ ██████╗  █████╗ ██╗   ██╗██╗████████╗██╗   ██╗",
+        "    ██╔══██╗████╗  ██║╚══██╔══╝██║██╔════╝ ██╔══██╗██╔══██╗██║   ██║██║╚══██╔══╝╚██╗ ██╔╝",
+        "    ███████║██╔██╗ ██║   ██║   ██║██║  ███╗██████╔╝███████║██║   ██║██║   ██║    ╚████╔╝",
+        "    ██╔══██║██║╚██╗██║   ██║   ██║██║   ██║██╔══██╗██╔══██║╚██╗ ██╔╝██║   ██║     ╚██╔╝",
+        "    ██║  ██║██║ ╚████║   ██║   ██║╚██████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║   ██║      ██║",
+        "    ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝   ╚═╝      ╚═╝",
+        "",
+        "                    ██████╗ ███████╗ ██████╗ ██████╗ ██╗   ██╗███████╗██████╗ ██╗   ██╗",
+        "                    ██╔══██╗██╔════╝██╔════╝██╔═══██╗██║   ██║██╔════╝██╔══██╗╚██╗ ██╔╝",
+        "                    ██████╔╝█████╗  ██║     ██║   ██║██║   ██║█████╗  ██████╔╝ ╚████╔╝",
+        "                    ██╔══██╗██╔══╝  ██║     ██║   ██║╚██╗ ██╔╝██╔══╝  ██╔══██╗  ╚██╔╝",
+        "                    ██║  ██║███████╗╚██████╗╚██████╔╝ ╚████╔╝ ███████╗██║  ██║   ██║",
+        "                    ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═════╝   ╚═══╝  ╚══════╝╚═╝  ╚═╝   ╚═╝",
+        ""
+    ]
+    
+    # Measure length of lines
+    max_len = max(len(line) for line in raw_lines)
+    padding = 2
+    box_width = max_len + (padding * 2)
+    
+    logo_lines = []
+    logo_lines.append("╔" + "═" * box_width + "╗")
+    
+    for line in raw_lines:
+        padded = line.ljust(max_len)
+        logo_lines.append("║" + " " * padding + padded + " " * padding + "║")
+        
+    logo_lines.append("╚" + "═" * box_width + "╝")
+    
+    # 24-bit color gradient for the total number of lines
+    total_lines = len(logo_lines)
+    gradient = []
+    for idx in range(total_lines):
+        ratio = idx / (total_lines - 1) if total_lines > 1 else 0
+        r = int(0 + (240 - 0) * ratio)
+        g = int(200 + (0 - 200) * ratio)
+        b = int(255 + (190 - 255) * ratio)
+        gradient.append(f"\033[38;2;{r};{g};{b}m")
+        
+    for i, line in enumerate(logo_lines):
+        color = gradient[i] if CLR_RESET else ""
+        print(f" {color}{line}{CLR_RESET}")
+    print()
+
+
+def print_system_info():
+    if not CLR_RESET:
+        print("  System Info:")
+        print(f"    OS: {_SYSTEM}")
+        print(f"    Databases found: {len(DB_PATHS)}")
+        print()
+        return
+        
+    print(f"  {CLR_CYAN}┌{CLR_DIM}────────────────────────────────────────────────────────────────────{CLR_RESET}{CLR_CYAN}┐{CLR_RESET}")
+    os_str = f" {_SYSTEM} (WSL)" if _IS_WSL else f" {_SYSTEM}"
+    print(f"  {CLR_CYAN}│{CLR_RESET}  {CLR_BOLD}{CLR_WHITE}OS        :{CLR_RESET}{os_str:<55}{CLR_CYAN}│{CLR_RESET}")
+    db_count_str = f" {len(DB_PATHS)} databases detected"
+    print(f"  {CLR_CYAN}│{CLR_RESET}  {CLR_BOLD}{CLR_WHITE}DATABASES :{CLR_RESET}{db_count_str:<55}{CLR_CYAN}│{CLR_RESET}")
+    print(f"  {CLR_CYAN}└{CLR_DIM}────────────────────────────────────────────────────────────────────{CLR_RESET}{CLR_CYAN}┘{CLR_RESET}")
+    print()
+
+
 def main():
     if "_enable_ansi_and_colors" in globals():
         _enable_ansi_and_colors()
