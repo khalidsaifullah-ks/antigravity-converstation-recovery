@@ -49,7 +49,6 @@ _RELEASES_URL = f"https://github.com/{_GITHUB_REPO}/releases/latest"
 CLR_RESET = "\033[0m"
 CLR_BOLD = "\033[1m"
 CLR_DIM = "\033[2m"
-CLR_RED = "\033[31(m" # Note: small typo or different style if needed, we'll use normal colors
 CLR_RED = "\033[31m"
 CLR_GREEN = "\033[32m"
 CLR_YELLOW = "\033[33m"
@@ -977,7 +976,40 @@ def build_trajectory_entry(conversation_id, title, existing_inner_data=None,
     return entry
 
 def check_for_updates():
-    pass
+    """
+    Check GitHub for a newer release. Non-blocking — silently returns
+    on any network error so offline users are not affected.
+    """
+    try:
+        api_url = f"https://api.github.com/repos/{_GITHUB_REPO}/releases/latest"
+        req = Request(api_url, headers={"User-Agent": "AntigravityConversationRecovery"})
+        with urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        tag = data.get("tag_name", "").lstrip("Vv")
+        if not tag:
+            return
+
+        try:
+            remote = tuple(int(x) for x in tag.split("."))
+            local = tuple(int(x) for x in _CURRENT_VERSION.split("."))
+        except ValueError:
+            return
+
+        if remote <= local:
+            return
+
+        print("  " + f"{CLR_YELLOW}*{CLR_RESET}" * 58)
+        print(f"  {CLR_BOLD}{CLR_YELLOW}UPDATE AVAILABLE:{CLR_RESET} v{_CURRENT_VERSION} -> v{tag}")
+        print(f"  {CLR_CYAN}{_RELEASES_URL}{CLR_RESET}")
+        print("  " + f"{CLR_YELLOW}*{CLR_RESET}" * 58)
+        print()
+        choice = input(f"  {CLR_BOLD}Open download page in browser? (Y/n): {CLR_RESET}").strip().lower()
+        if choice in ("", "y", "yes"):
+            webbrowser.open(_RELEASES_URL)
+            print(f"  {CLR_GREEN}Opened in browser. You can continue or close this window.{CLR_RESET}")
+        print()
+    except Exception:
+        pass
 
 def main():
     _enable_ansi_and_colors()
