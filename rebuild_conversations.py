@@ -1075,8 +1075,157 @@ def print_system_info():
 
 def main():
     _enable_ansi_and_colors()
+    print()
     print_logo()
     print_system_info()
+
+    check_for_updates()
+
+    print(f"  {CLR_BOLD}{CLR_RED}IMPORTANT: Close Antigravity completely before continuing.{CLR_RESET}")
+    print("  If it is open, this fix may be overwritten when the app exits.")
+    print()
+
+    # ── Check if Antigravity is running ────────────────────────────────────
+
+    _ag_running = False
+    if _SYSTEM == "Windows":
+        for exe_name in ("antigravity.exe", "antigravity ide.exe"):
+            try:
+                result = subprocess.run(
+                    ['tasklist', '/FI', f'IMAGENAME eq {exe_name}'],
+                    capture_output=True, text=True, creationflags=0x08000000
+                )
+                if exe_name in result.stdout.lower():
+                    _ag_running = True
+                    break
+            except Exception:
+                pass
+    elif _IS_WSL:
+        for exe_name in ("antigravity.exe", "antigravity ide.exe"):
+            try:
+                result = subprocess.run(
+                    ['tasklist.exe', '/FI', f'IMAGENAME eq {exe_name}'],
+                    capture_output=True, text=True
+                )
+                if exe_name in result.stdout.lower():
+                    _ag_running = True
+                    break
+            except Exception:
+                pass
+        if not _ag_running:
+            try:
+                result = subprocess.run(
+                    ['pgrep', '-f', 'antigravity'],
+                    capture_output=True, text=True
+                )
+                if result.stdout.strip():
+                    _ag_running = True
+            except Exception:
+                pass
+    else:
+        try:
+            result = subprocess.run(
+                ['pgrep', '-f', 'antigravity'],
+                capture_output=True, text=True
+            )
+            if result.stdout.strip():
+                _ag_running = True
+        except Exception:
+            pass
+
+    if _ag_running:
+        print(f"  {CLR_BOLD}{CLR_YELLOW}WARNING: Antigravity may still be running!{CLR_RESET}")
+        print()
+        print("  The fix will NOT work correctly while Antigravity is open.")
+        print("  Please close it first: File > Exit, or kill it.")
+        print()
+        choice = input(f"  {CLR_BOLD}Press Enter to continue anyway (or type Q to quit): {CLR_RESET}")
+        if choice.strip().lower() == 'q':
+            return 1
+        print()
+
+    # ── Validate paths ──────────────────────────────────────────────────────
+
+    if not DB_PATHS:
+        print(f"  {CLR_BOLD}{CLR_RED}ERROR: Database not found at any known Antigravity location:{CLR_RESET}")
+        for candidate in _DB_CANDIDATES:
+            print(f"    {CLR_DIM}{candidate}{CLR_RESET}")
+        print()
+        print("  Make sure Antigravity has been installed and opened at least once.")
+        input(f"\n  {CLR_BOLD}Press Enter to close...{CLR_RESET}")
+        return 1
+
+    # ── Discover conversations (multi-folder merge with dedup) ───────────
+
+    conv_catalog = _collect_all_conversations()
+
+    if not conv_catalog:
+        print("  No conversations found on disk. Nothing to fix.")
+        input("\n  Press Enter to close...")
+        return 0
+
+    # Sort by modification time (newest first)
+    conversation_ids = sorted(
+        conv_catalog.keys(),
+        key=lambda cid: os.path.getmtime(conv_catalog[cid]),
+        reverse=True,
+    )
+
+    # Show folder scan summary
+    dir_counts = {}
+    for cid, pb_path in conv_catalog.items():
+        parent = os.path.dirname(pb_path)
+        dir_counts[parent] = dir_counts.get(parent, 0) + 1
+    for d, c in dir_counts.items():
+        folder_name = os.path.basename(os.path.dirname(d))
+        print(f"    {folder_name}: {c} conversation(s)")
+    print(f"  Found {len(conversation_ids)} unique conversations across all folders")
+    print()
+
+    # ── Preserve existing metadata ──────────────────────────────────────────
+
+    print(f"  {CLR_CYAN}Reading existing metadata from database(s)...{CLR_RESET}")
+    for db_path in DB_PATHS:
+        app_name = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(db_path))))
+        print(f"    {CLR_DIM}{app_name}:{CLR_RESET} {db_path}")
+    existing_titles, existing_inner_blobs = extract_existing_metadata_from_paths(DB_PATHS)
+    ws_count = sum(1 for v in existing_inner_blobs.values()
+                   if extract_workspace_hint(v))
+    print(f"  Found {CLR_BOLD}{len(existing_titles)}{CLR_RESET} existing titles to preserve")
+    print(f"  Found {ws_count} conversations with workspace metadata")
+    print()
+
+    # ── Scan conversations ──────────────────────────────────────────────────
+
+    print(f"  {CLR_CYAN}Scanning conversations (newest first):{CLR_RESET}")
+    print("  " + f"{CLR_DIM}-" * 58 + CLR_RESET)
+
+    resolved = []
+    stats = {"brain": 0, "preserved": 0, "fallback": 0}
+    markers = {"brain": "+", "preserved": "~", "fallback": "?"}
+
+    for i, cid in enumerate(conversation_ids, 1):
+        title, source = resolve_title(cid, existing_titles, conv_catalog.get(cid))
+        inner_data = existing_inner_blobs.get(cid)
+        has_ws = bool(inner_data and extract_workspace_hint(inner_data))
+        resolved.append((cid, title, source, inner_data, has_ws))
+        stats[source] += 1
+        marker = markers[source]
+        
+        if source == "brain":
+            m_color = CLR_GREEN
+        elif source == "preserved":
+            m_color = CLR_CYAN
+        else:
+            m_color = CLR_YELLOW
+            
+        ws_flag = f" {CLR_MAGENTA}[WS]{CLR_RESET}" if has_ws else ""
+        print(f"    [{CLR_CYAN}{i:3d}{CLR_RESET}] {m_color}{marker}{CLR_RESET} {title[:50]}{ws_flag}")
+
+    print("  " + f"{CLR_DIM}-" * 58 + CLR_RESET)
+    print(f"  Legend: [{CLR_GREEN}+{CLR_RESET}] brain  [{CLR_CYAN}~{CLR_RESET}] preserved  [{CLR_YELLOW}?{CLR_RESET}] fallback  [{CLR_MAGENTA}WS{CLR_RESET}] workspace")
+    print(f"  Totals: {CLR_GREEN}{stats['brain']} brain{CLR_RESET}, {CLR_CYAN}{stats['preserved']} preserved{CLR_RESET}, {CLR_YELLOW}{stats['fallback']} fallback{CLR_RESET}")
+    print()
     return 0
 
 if __name__ == "__main__":
