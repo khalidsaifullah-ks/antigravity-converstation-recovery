@@ -1226,6 +1226,111 @@ def main():
     print(f"  Legend: [{CLR_GREEN}+{CLR_RESET}] brain  [{CLR_CYAN}~{CLR_RESET}] preserved  [{CLR_YELLOW}?{CLR_RESET}] fallback  [{CLR_MAGENTA}WS{CLR_RESET}] workspace")
     print(f"  Totals: {CLR_GREEN}{stats['brain']} brain{CLR_RESET}, {CLR_CYAN}{stats['preserved']} preserved{CLR_RESET}, {CLR_YELLOW}{stats['fallback']} fallback{CLR_RESET}")
     print()
+
+    # ── Workspace assignment ───────────────────────────────────────────────
+
+    unmapped = [(i, cid, title)
+                for i, (cid, title, _, inner_data, has_ws) in enumerate(resolved, 1)
+                if not has_ws]
+
+    ws_assignments = {}
+
+    known_ws_uris = load_known_workspace_uris()
+    if known_ws_uris:
+        print(f"  Loaded {len(known_ws_uris)} known workspace(s) from workspaceStorage")
+    else:
+        print("  No workspaceStorage found — using fallback heuristic")
+    print()
+
+    if unmapped:
+        print(f"  {CLR_BOLD}{CLR_YELLOW}{len(unmapped)}{CLR_RESET} conversation(s) have no workspace assigned.")
+        print()
+        print(f"  {CLR_BOLD}Press Enter or 1:{CLR_RESET} Auto-assign workspaces (recommended)")
+        print(f"  {CLR_BOLD}Press 2:{CLR_RESET}          Auto-assign + manually assign the rest")
+        print()
+        choice = input(f"  {CLR_BOLD}Your choice: {CLR_RESET}").strip()
+
+        print()
+        print(f"  {CLR_CYAN}Auto-assigning workspaces from brain artifacts...{CLR_RESET}")
+        auto_count = 0
+        for idx, cid, title in unmapped:
+            inferred = infer_workspace_from_brain(cid, known_ws_uris)
+            if inferred and (_is_remote_uri(inferred) or os.path.isdir(inferred)):
+                ws_assignments[cid] = inferred
+                auto_count += 1
+                display = os.path.basename(inferred) if not _is_remote_uri(inferred) else inferred
+                print(f"    [{CLR_CYAN}{idx:3d}{CLR_RESET}] -> {display}")
+        if auto_count:
+            print(f"  Auto-assigned {auto_count} workspace(s)")
+        else:
+            print("  No workspaces could be auto-detected.")
+        print()
+
+        if choice == '2':
+            still_unmapped = [(idx, cid, title)
+                              for idx, cid, title in unmapped
+                              if cid not in ws_assignments]
+            if still_unmapped:
+                user_assignments = interactive_workspace_assignment(still_unmapped)
+                ws_assignments.update(user_assignments)
+            else:
+                print("  All conversations were auto-assigned — nothing left to assign manually.")
+                print()
+
+    # ── Build the new index ─────────────────────────────────────────────────
+
+    print("  Building final index...")
+    result_bytes = b""
+    ws_total = 0
+    ts_injected = 0
+
+    for cid, title, source, inner_data, has_ws in resolved:
+        ws_path = ws_assignments.get(cid)
+        pb_path = conv_catalog.get(cid)
+        pb_mtime = os.path.getmtime(pb_path) if pb_path and os.path.exists(pb_path) else None
+
+        entry = build_trajectory_entry(cid, title, inner_data, ws_path, pb_mtime)
+        result_bytes += encode_length_delimited(1, entry)
+
+        if has_ws or ws_path:
+            ws_total += 1
+        if pb_mtime and (not inner_data or not has_timestamp_fields(inner_data)):
+            ts_injected += 1
+
+    print(f"  Workspace: {ws_total} mapped  |  Timestamps injected: {ts_injected}")
+    print()
+
+    # ── Write the rebuilt index to ALL databases ────────────────────────────
+
+    encoded = base64.b64encode(result_bytes).decode('utf-8')
+
+    print("  Writing rebuilt index to database(s):")
+    for db_path in DB_PATHS:
+        app_name = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(db_path))))
+        suffix = re.sub(r"[^A-Za-z0-9]+", "_", app_name).strip("_").lower()
+        backup_name = write_index_to_database(db_path, encoded, suffix)
+        print(f"    {app_name}: updated")
+        if backup_name:
+            print(f"      backup: {backup_name}")
+
+    # ── Done ────────────────────────────────────────────────────────────────
+
+    total = len(conversation_ids)
+    print()
+    print("  " + f"{CLR_GREEN}{CLR_BOLD}=" * 58)
+    print(f"  {CLR_GREEN}{CLR_BOLD}SUCCESS! Rebuilt index with {total} conversations.{CLR_RESET}")
+    print("  " + f"{CLR_GREEN}{CLR_BOLD}=" * 58 + CLR_RESET)
+    print()
+    print(f"  {CLR_BOLD}{CLR_WHITE}NEXT STEPS:{CLR_RESET}")
+    if _IS_WSL:
+        print(f"    1. Make sure Antigravity is {CLR_BOLD}fully closed{CLR_RESET} on the Windows side")
+        print(f"    2. Open Antigravity — conversations should appear sorted by date")
+    else:
+        print(f"    1. Make sure Antigravity is {CLR_BOLD}fully closed{CLR_RESET}")
+        print(f"    2. {CLR_BOLD}{CLR_YELLOW}REBOOT your PC{CLR_RESET} (full restart, not just app restart)")
+        print(f"    3. Open Antigravity — conversations should appear sorted by date")
+    print()
+    input(f"  {CLR_BOLD}Press Enter to close...{CLR_RESET}")
     return 0
 
 if __name__ == "__main__":
