@@ -1334,4 +1334,8 @@ def main():
     return 0
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print(f"\n\n  {CLR_YELLOW}Operation cancelled by user. Exiting...{CLR_RESET}\n")
+        sys.exit(0)
