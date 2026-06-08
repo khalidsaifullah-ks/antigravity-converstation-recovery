@@ -1141,7 +1141,8 @@ def main():
         print()
         choice = input(f"  {CLR_BOLD}Press Enter to continue anyway (or type Q to quit): {CLR_RESET}")
         if choice.strip().lower() == 'q':
-            return 1
+            print("  Exiting on user request.")
+            return 0
         print()
 
     # ── Validate paths ──────────────────────────────────────────────────────
