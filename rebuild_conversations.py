@@ -43,6 +43,7 @@ from urllib.request import urlopen, Request
 
 _CURRENT_VERSION = "1.0"
 _GITHUB_REPO = "khalidsaifullah-ks/antigravity-converstation-recovery"
+# Repository releases URL for updates
 _RELEASES_URL = f"https://github.com/{_GITHUB_REPO}/releases/latest"
 
 # ─── Terminal Styling ────────────────────────────────────────────────────────
