@@ -4,8 +4,28 @@ Antigravity Conversation Recovery
 =============================
 Rebuilds the Antigravity conversation index so all your chat history
 appears correctly — sorted by date (newest first) with proper titles.
+
+Fixes:
+  - Missing conversations in the sidebar
+  - Wrong ordering (not sorted by date)
+  - Missing/placeholder titles
+  - Workspace assignments stripped or lost
+  - Missing timestamps causing sort issues
+
+Usage:
+  1. CLOSE Antigravity completely (File > Exit, or kill from Task Manager)
+  2. Run this script (or use run.bat on Windows)
+  3. REBOOT your PC (full restart, not just app restart)
+  4. Open Antigravity — your conversations should appear, sorted by date
+ 
+Requirements: Python 3.7+ (no external packages needed)
+License: MIT
 """
 
+# ─── Python Version Guard ────────────────────────────────────────────────────
+# If accidentally launched with Python 2 (e.g. `python` points to 2.x on
+# legacy systems), automatically re-exec with python3 instead of crashing
+# with syntax errors.  If python3 isn't available either, give a clear message.
 import sys
 import os
 
@@ -43,7 +63,6 @@ from urllib.request import urlopen, Request
 
 _CURRENT_VERSION = "1.0"
 _GITHUB_REPO = "khalidsaifullah-ks/antigravity-converstation-recovery"
-# Repository releases URL for updates
 _RELEASES_URL = f"https://github.com/{_GITHUB_REPO}/releases/latest"
 
 # ─── Terminal Styling ────────────────────────────────────────────────────────
@@ -57,8 +76,6 @@ CLR_BLUE = "\033[34m"
 CLR_MAGENTA = "\033[35m"
 CLR_CYAN = "\033[36m"
 CLR_WHITE = "\033[37m"
-
-_SYSTEM = platform.system()
 
 def _enable_ansi_and_colors():
     global CLR_RESET, CLR_BOLD, CLR_DIM, CLR_RED, CLR_GREEN, CLR_YELLOW, CLR_BLUE, CLR_MAGENTA, CLR_CYAN, CLR_WHITE
@@ -100,7 +117,9 @@ def _enable_ansi_and_colors():
 # We check the new name first, then fall back to the old name so the tool
 # works on both old and new installations.
 
+_SYSTEM = platform.system()
 _ANTIGRAVITY_NAMES = ("Antigravity IDE", "antigravity", "Antigravity")
+
 
 def _is_wsl():
     """Detect if running inside Windows Subsystem for Linux."""
@@ -116,13 +135,15 @@ def _is_wsl():
         pass
     return False
 
+
 _IS_WSL = _is_wsl()
+
 
 def _get_wsl_windows_appdata():
     """
     Resolve the Windows %APPDATA% path from inside WSL.
     Strategy 1: Ask Windows directly via cmd.exe and convert with wslpath.
-    Strategy 2: Scan /mnt/c/Users/ for user folders that have Antigravity installed.
+    Strategy 2: Scan /mnt/c/Users/ for folders that have Antigravity installed.
     Returns a WSL-accessible path string, or None if resolution fails.
     """
     # Strategy 1: cmd.exe %APPDATA% → wslpath
@@ -161,6 +182,7 @@ def _get_wsl_windows_appdata():
 
     return None
 
+
 def _first_existing(*candidates):
     """Return the first path that exists on disk, or the first candidate if none exist."""
     for p in candidates:
@@ -168,9 +190,11 @@ def _first_existing(*candidates):
             return p
     return candidates[0]
 
+
 def _existing_paths(*candidates):
     """Return all candidate paths that exist on disk, preserving order."""
     return [p for p in candidates if p and os.path.exists(p)]
+
 
 if _SYSTEM == "Windows":
     _appdata = os.path.expandvars(r"%APPDATA%")
@@ -313,6 +337,7 @@ else:  # Linux and other POSIX systems
 DB_PATHS = _existing_paths(*_DB_CANDIDATES)
 BACKUP_FILENAME = "trajectorySummaries_backup.txt"
 
+
 def _find_brain_path(conversation_id):
     """Return the first existing brain folder for this conversation across all locations."""
     for brain_dir in _ALL_BRAIN_DIRS:
@@ -320,6 +345,7 @@ def _find_brain_path(conversation_id):
         if os.path.isdir(p):
             return p
     return None
+
 
 def _collect_all_conversations():
     """
@@ -334,6 +360,8 @@ def _collect_all_conversations():
             continue
         try:
             for name in os.listdir(conv_dir):
+                # Accept .pb (legacy protobuf) and .db (new SQLite) files
+                # Skip SQLite journal files (.db-shm, .db-wal)
                 if name.endswith(".pb"):
                     cid = name[:-3]
                 elif name.endswith(".db") and not name.endswith((".db-shm", ".db-wal")):
@@ -346,6 +374,7 @@ def _collect_all_conversations():
             pass
     return catalog
 
+
 # ─── Protobuf Varint Helpers ─────────────────────────────────────────────────
 
 def encode_varint(value):
@@ -356,6 +385,7 @@ def encode_varint(value):
         value >>= 7
     result += bytes([value & 0x7F])
     return result or b'\x00'
+
 
 def decode_varint(data, pos):
     """Decode a protobuf varint at the given position. Returns (value, new_pos)."""
@@ -369,6 +399,7 @@ def decode_varint(data, pos):
         pos += 1
     return result, pos
 
+
 def skip_protobuf_field(data, pos, wire_type):
     """Skip over a protobuf field value at the given position. Returns new_pos."""
     if wire_type == 0:    # varint
@@ -381,6 +412,7 @@ def skip_protobuf_field(data, pos, wire_type):
     elif wire_type == 5:  # 32-bit fixed
         pos += 4
     return pos
+
 
 def strip_field_from_protobuf(data, target_field_number):
     """
@@ -408,6 +440,7 @@ def strip_field_from_protobuf(data, target_field_number):
             remaining += data[start_pos:pos]
     return remaining
 
+
 # ─── Protobuf Write Helpers ──────────────────────────────────────────────────
 
 def encode_length_delimited(field_number, data):
@@ -415,15 +448,18 @@ def encode_length_delimited(field_number, data):
     tag = (field_number << 3) | 2
     return encode_varint(tag) + encode_varint(len(data)) + data
 
+
 def encode_string_field(field_number, string_value):
     """Encode a string as a protobuf field."""
     return encode_length_delimited(field_number, string_value.encode('utf-8'))
+
 
 # ─── Workspace Helpers ───────────────────────────────────────────────────────
 
 def _is_remote_uri(path_or_uri):
     """Check if a string is already a remote/absolute URI (not a local path)."""
     return path_or_uri.startswith("vscode-remote://") or path_or_uri.startswith("file:///")
+
 
 def path_to_workspace_uri(folder_path):
     """
@@ -433,9 +469,11 @@ def path_to_workspace_uri(folder_path):
     Example: D:\\Repos\\My Project  →  file:///d:/Repos/My Project
     WSL:     /mnt/c/Users/name/Project → file:///c:/Users/name/Project
     """
+    # Pass through URIs that are already in the correct format
     if _is_remote_uri(folder_path):
         return folder_path
 
+    # WSL: convert /mnt/<drive>/... to file:///<drive>:/...
     if _IS_WSL and folder_path.startswith("/mnt/"):
         parts = folder_path.split("/")
         if len(parts) >= 3 and len(parts[2]) == 1:
@@ -456,6 +494,7 @@ def path_to_workspace_uri(folder_path):
     else:
         return f"file:///{rest.lstrip('/')}"
 
+
 def build_workspace_field(folder_path):
     """
     Build protobuf field 9 (workspace sub-message) from a filesystem path.
@@ -470,6 +509,7 @@ def build_workspace_field(folder_path):
         + encode_string_field(2, uri)
     )
     return encode_length_delimited(9, sub_msg)
+
 
 def extract_workspace_hint(inner_blob):
     """
@@ -508,6 +548,7 @@ def extract_workspace_hint(inner_blob):
         pass
     return None
 
+
 def load_known_workspace_uris():
     """
     Load all known workspace URIs from Antigravity's workspaceStorage.
@@ -531,8 +572,10 @@ def load_known_workspace_uris():
                     pass
     except Exception:
         pass
+    # Sort longest first so more-specific paths match before parent paths
     uris.sort(key=len, reverse=True)
     return uris
+
 
 def _uri_to_local_path(file_uri):
     """
@@ -544,12 +587,15 @@ def _uri_to_local_path(file_uri):
     if not file_uri.startswith("file:///"):
         return None
     raw = unquote(file_uri[len("file://"):])
+    # On Windows, file:///C:/... -> C:/...
     if _SYSTEM == "Windows" and len(raw) >= 3 and raw[0] == '/' and raw[2] == ':':
-        raw = raw[1:]
+        raw = raw[1:]  # strip leading /
+    # On WSL, file:///C:/... -> /mnt/c/...
     elif _IS_WSL and len(raw) >= 3 and raw[0] == '/' and raw[2] == ':':
         drive = raw[1].lower()
         raw = f"/mnt/{drive}{raw[3:]}"
     return raw
+
 
 def infer_workspace_from_brain(conversation_id, known_ws_uris=None):
     """
@@ -562,14 +608,16 @@ def infer_workspace_from_brain(conversation_id, known_ws_uris=None):
     if not brain_path:
         return None
 
+    # Two separate patterns: local file:/// and remote vscode-remote://
     if _SYSTEM == "Windows":
         local_pattern = re.compile(r"file:///([A-Za-z](?:%3A|:)/[^)\s\"'\]>]+)")
     else:
         local_pattern = re.compile(r"file:///([^)\s\"'\]>]+)")
     remote_pattern = re.compile(r"(vscode-remote://[^)\s\"'\]>]+)")
 
-    found_uris = []
-    found_remote = []
+    # Collect all file URIs found in brain .md files
+    found_uris = []     # full file:/// URIs
+    found_remote = []   # full vscode-remote:// URIs
 
     try:
         for name in os.listdir(brain_path):
@@ -593,6 +641,7 @@ def infer_workspace_from_brain(conversation_id, known_ws_uris=None):
     if not found_uris and not found_remote:
         return None
 
+    # ── Strategy 1: Match against known workspace URIs (preferred) ────────
     if known_ws_uris:
         ws_counts = {}
         for file_uri in found_uris:
@@ -603,7 +652,7 @@ def infer_workspace_from_brain(conversation_id, known_ws_uris=None):
                 ws_norm = ws_norm.replace("%20", " ")
                 if normalized.startswith(ws_norm + "/") or normalized == ws_norm:
                     ws_counts[ws_uri] = ws_counts.get(ws_uri, 0) + 1
-                    break
+                    break  # matched most-specific (sorted longest-first)
 
         for remote_uri in found_remote:
             for ws_uri in known_ws_uris:
@@ -618,19 +667,29 @@ def infer_workspace_from_brain(conversation_id, known_ws_uris=None):
                 return local
             return best_ws_uri
 
+    # ── Strategy 2: Fallback — heuristic depth-based approach ─────────────
     path_counts = {}
     for file_uri in found_uris:
         raw = file_uri[len("file:///"):]
         raw = raw.replace("%3A", ":").replace("%3a", ":")
         raw = raw.replace("%20", " ")
 
+        # WSL: normalize Windows drive letters in URIs to /mnt/ paths
         if _IS_WSL and len(raw) >= 2 and raw[1] == ':':
             drive = raw[0].lower()
             raw = f"mnt/{drive}/{raw[3:]}"
 
         parts = raw.replace("\\", "/").split("/")
-        if len(parts) >= 5 if (_SYSTEM == "Windows" or (_IS_WSL and raw.startswith("mnt/"))) else 4:
-            depth = 5 if (_SYSTEM == "Windows" or (_IS_WSL and raw.startswith("mnt/"))) else 4
+        # On Windows paths like C:/Users/name/Desktop/Project → 5 segments.
+        # On WSL paths like mnt/c/Users/name/Project → 5 segments.
+        # On Linux/Mac like home/user/projects/Project → 4 segments + re-add /.
+        if _SYSTEM == "Windows":
+            depth = 5
+        elif _IS_WSL and raw.startswith("mnt/"):
+            depth = 5
+        else:
+            depth = 4
+        if len(parts) >= depth:
             ws = "/".join(parts[:depth])
             if _SYSTEM != "Windows" and not ws.startswith("/"):
                 ws = "/" + ws
@@ -643,9 +702,11 @@ def infer_workspace_from_brain(conversation_id, known_ws_uris=None):
         return None
 
     best = max(path_counts, key=path_counts.get)
+    # Remote URIs are returned as-is; local paths get OS-native separators
     if best.startswith("vscode-remote://"):
         return best
     return best.replace("/", os.sep)
+
 
 # ─── Timestamp Helpers ───────────────────────────────────────────────────────
 
@@ -662,6 +723,7 @@ def build_timestamp_fields(epoch_seconds):
         + encode_length_delimited(7, ts_inner)
         + encode_length_delimited(10, ts_inner)
     )
+
 
 def has_timestamp_fields(inner_blob):
     """Check if the inner blob already contains timestamp fields (3, 7, or 10)."""
@@ -680,6 +742,7 @@ def has_timestamp_fields(inner_blob):
         pass
     return False
 
+
 # ─── Interactive Workspace Assignment ────────────────────────────────────────
 
 def _prompt_valid_folder(prompt_text):
@@ -689,6 +752,7 @@ def _prompt_valid_folder(prompt_text):
         if raw == "":
             return None
         folder = raw.strip('"').strip("'").rstrip("\\/")
+        # Accept remote URIs without filesystem validation
         if _is_remote_uri(folder):
             print(f"    + Mapped remote URI: {folder}")
             return folder
@@ -698,6 +762,7 @@ def _prompt_valid_folder(prompt_text):
         else:
             print(f"    x Path not found: {folder}")
             print(f"      (Make sure the folder exists. Try again or press Enter to skip)")
+
 
 def interactive_workspace_assignment(unmapped_entries):
     """
@@ -742,7 +807,9 @@ def interactive_workspace_assignment(unmapped_entries):
                 batch_path = folder
                 assignments[cid] = folder
                 break
+            # Normal path entry
             folder = raw.strip('"').strip("'").rstrip("\\/")
+            # Accept remote URIs without filesystem validation
             if _is_remote_uri(folder):
                 print(f"    + Mapped remote URI: {folder}")
                 assignments[cid] = folder
@@ -760,6 +827,7 @@ def interactive_workspace_assignment(unmapped_entries):
         print(f"  + Assigned workspace to {len(assignments)} conversation(s)")
     print()
     return assignments
+
 
 # ─── Metadata Extraction ─────────────────────────────────────────────────────
 
@@ -801,6 +869,7 @@ def extract_existing_metadata(db_path):
             entry = decoded[pos:pos + length]
             pos += length
 
+            # Parse each entry for UUID (field 1) and info blob (field 2)
             ep, uid, info_b64 = 0, None, None
             while ep < len(entry):
                 t, ep = decode_varint(entry, ep)
@@ -840,6 +909,7 @@ def extract_existing_metadata(db_path):
 
     return titles, inner_blobs
 
+
 def extract_existing_metadata_from_paths(db_paths):
     """
     Read metadata from ALL existing Antigravity databases.
@@ -857,6 +927,7 @@ def extract_existing_metadata_from_paths(db_paths):
             if cid not in merged_inner_blobs:
                 merged_inner_blobs[cid] = blob
     return merged_titles, merged_inner_blobs
+
 
 def write_index_to_database(db_path, encoded_value, backup_suffix):
     """Back up and write the rebuilt trajectory index into one state.vscdb."""
@@ -892,6 +963,7 @@ def write_index_to_database(db_path, encoded_value, backup_suffix):
     conn.close()
     return backup_name if row and row[0] else None
 
+
 def get_title_from_brain(conversation_id):
     """
     Try to extract a title from brain artifact .md files.
@@ -915,6 +987,7 @@ def get_title_from_brain(conversation_id):
 
     return None
 
+
 def resolve_title(conversation_id, existing_titles, pb_path=None):
     """
     Determine the best title for a conversation. Priority:
@@ -923,9 +996,11 @@ def resolve_title(conversation_id, existing_titles, pb_path=None):
       3. Fallback: date + short UUID
     Returns (title, source) where source is 'preserved', 'brain', or 'fallback'.
     """
+    # Prefer the canonical title Antigravity already has in the database
     if conversation_id in existing_titles:
         return existing_titles[conversation_id], "preserved"
 
+    # Fall back to brain artifact heading for conversations not yet indexed
     brain_title = get_title_from_brain(conversation_id)
     if brain_title:
         return brain_title, "brain"
@@ -943,13 +1018,28 @@ def resolve_title(conversation_id, existing_titles, pb_path=None):
 
     return f"Conversation {conversation_id[:8]}", "fallback"
 
+
+# ─── Protobuf Entry Builder ──────────────────────────────────────────────────
+
 def build_trajectory_entry(conversation_id, title, existing_inner_data=None,
                            workspace_path=None, pb_mtime=None):
-    """Build a single trajectory summary protobuf entry."""
+    """
+    Build a single trajectory summary protobuf entry.
+
+    - If existing_inner_data is provided, title (field 1) is replaced but
+      ALL other fields (workspace, timestamps, tool state) are preserved.
+    - If workspace_path is provided and there is no existing workspace,
+      a workspace field (field 9) is injected.
+    - If pb_mtime is provided and timestamps are missing,
+      timestamp fields (3, 7, 10) are injected for proper sorting.
+    """
     if existing_inner_data:
         preserved_fields = strip_field_from_protobuf(existing_inner_data, 1)
         inner_info = encode_string_field(1, title) + preserved_fields
 
+        # Decode %20/%3A in existing workspace URIs so folder names display
+        # correctly in Antigravity's sidebar (e.g. "Pine Script Project" not
+        # "Pine%20Script%20Project")
         if not workspace_path:
             existing_ws = extract_workspace_hint(inner_info)
             if existing_ws and ("%20" in existing_ws or "%3A" in existing_ws or "%3a" in existing_ws):
@@ -957,9 +1047,12 @@ def build_trajectory_entry(conversation_id, title, existing_inner_data=None,
                 inner_info = strip_field_from_protobuf(inner_info, 9)
                 inner_info += build_workspace_field(decoded_ws)
 
+        # Override workspace if user assigned a new one
         if workspace_path:
+            # Strip old workspace (field 9) and inject the new one
             inner_info = strip_field_from_protobuf(inner_info, 9)
             inner_info += build_workspace_field(workspace_path)
+        # Inject timestamps if missing
         if pb_mtime and not has_timestamp_fields(existing_inner_data):
             inner_info += build_timestamp_fields(pb_mtime)
     else:
@@ -976,6 +1069,9 @@ def build_trajectory_entry(conversation_id, title, existing_inner_data=None,
     entry += encode_length_delimited(2, sub_message)
     return entry
 
+
+# ─── Update Check ─────────────────────────────────────────────────────────────
+
 def check_for_updates():
     """
     Check GitHub for a newer release. Non-blocking — silently returns
@@ -990,6 +1086,7 @@ def check_for_updates():
         if not tag:
             return
 
+        # Simple numeric comparison (e.g. "1.06" vs "1.07")
         try:
             remote = tuple(int(x) for x in tag.split("."))
             local = tuple(int(x) for x in _CURRENT_VERSION.split("."))
@@ -1010,7 +1107,10 @@ def check_for_updates():
             print(f"  {CLR_GREEN}Opened in browser. You can continue or close this window.{CLR_RESET}")
         print()
     except Exception:
-        pass
+        pass  # No internet, API down, etc. — just continue silently
+
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
 
 def print_logo():
     raw_lines = [
@@ -1031,6 +1131,7 @@ def print_logo():
         ""
     ]
     
+    # Measure length of lines
     max_len = max(len(line) for line in raw_lines)
     padding = 2
     box_width = max_len + (padding * 2)
@@ -1044,6 +1145,7 @@ def print_logo():
         
     logo_lines.append("╚" + "═" * box_width + "╝")
     
+    # 24-bit color gradient for the total number of lines
     total_lines = len(logo_lines)
     gradient = []
     for idx in range(total_lines):
@@ -1057,6 +1159,7 @@ def print_logo():
         color = gradient[i] if CLR_RESET else ""
         print(f" {color}{line}{CLR_RESET}")
     print()
+
 
 def print_system_info():
     if not CLR_RESET:
@@ -1073,6 +1176,7 @@ def print_system_info():
     print(f"  {CLR_CYAN}│{CLR_RESET}  {CLR_BOLD}{CLR_WHITE}DATABASES :{CLR_RESET}{db_count_str:<55}{CLR_CYAN}│{CLR_RESET}")
     print(f"  {CLR_CYAN}└{CLR_DIM}────────────────────────────────────────────────────────────────────{CLR_RESET}{CLR_CYAN}┘{CLR_RESET}")
     print()
+
 
 def main():
     _enable_ansi_and_colors()
@@ -1102,6 +1206,7 @@ def main():
             except Exception:
                 pass
     elif _IS_WSL:
+        # Check the Windows host process first, then Linux processes
         for exe_name in ("antigravity.exe", "antigravity ide.exe"):
             try:
                 result = subprocess.run(
@@ -1124,6 +1229,7 @@ def main():
             except Exception:
                 pass
     else:
+        # Linux / macOS: check for antigravity process
         try:
             result = subprocess.run(
                 ['pgrep', '-f', 'antigravity'],
@@ -1142,8 +1248,7 @@ def main():
         print()
         choice = input(f"  {CLR_BOLD}Press Enter to continue anyway (or type Q to quit): {CLR_RESET}")
         if choice.strip().lower() == 'q':
-            print("  Exiting on user request.")
-            return 0
+            return 1
         print()
 
     # ── Validate paths ──────────────────────────────────────────────────────
@@ -1179,7 +1284,7 @@ def main():
         parent = os.path.dirname(pb_path)
         dir_counts[parent] = dir_counts.get(parent, 0) + 1
     for d, c in dir_counts.items():
-        folder_name = os.path.basename(os.path.dirname(d))
+        folder_name = os.path.basename(os.path.dirname(d))  # antigravity-ide, antigravity, etc.
         print(f"    {folder_name}: {c} conversation(s)")
     print(f"  Found {len(conversation_ids)} unique conversations across all folders")
     print()
@@ -1202,7 +1307,7 @@ def main():
     print(f"  {CLR_CYAN}Scanning conversations (newest first):{CLR_RESET}")
     print("  " + f"{CLR_DIM}-" * 58 + CLR_RESET)
 
-    resolved = []
+    resolved = []  # (cid, title, source, inner_data, has_ws)
     stats = {"brain": 0, "preserved": 0, "fallback": 0}
     markers = {"brain": "+", "preserved": "~", "fallback": "?"}
 
@@ -1235,8 +1340,9 @@ def main():
                 for i, (cid, title, _, inner_data, has_ws) in enumerate(resolved, 1)
                 if not has_ws]
 
-    ws_assignments = {}
+    ws_assignments = {}  # cid -> folder_path
 
+    # Load known workspace URIs from workspaceStorage for accurate matching
     known_ws_uris = load_known_workspace_uris()
     if known_ws_uris:
         print(f"  Loaded {len(known_ws_uris)} known workspace(s) from workspaceStorage")
@@ -1252,6 +1358,7 @@ def main():
         print()
         choice = input(f"  {CLR_BOLD}Your choice: {CLR_RESET}").strip()
 
+        # Auto-infer from brain artifacts (both options do this)
         print()
         print(f"  {CLR_CYAN}Auto-assigning workspaces from brain artifacts...{CLR_RESET}")
         auto_count = 0
@@ -1268,6 +1375,7 @@ def main():
             print("  No workspaces could be auto-detected.")
         print()
 
+        # Option 2: also do manual assignment for the rest
         if choice == '2':
             still_unmapped = [(idx, cid, title)
                               for idx, cid, title in unmapped
@@ -1335,9 +1443,6 @@ def main():
     input(f"  {CLR_BOLD}Press Enter to close...{CLR_RESET}")
     return 0
 
+
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except KeyboardInterrupt:
-        print(f"\n\n  {CLR_YELLOW}Operation cancelled by user. Exiting...{CLR_RESET}\n")
-        sys.exit(0)
+    sys.exit(main())
