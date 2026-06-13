@@ -8,8 +8,8 @@ Your Antigravity conversation history disappeared? Conversations showing in the 
 
 ## Quick Start (Windows)
 
-1. **Close Antigravity** completely (File -> Exit or kill from Task Manager)
-2. Download **`Antigravity_Conversation_Recovery_Final.exe`** from the project files
+1. **Close Antigravity** completely (File → Exit or kill from Task Manager)
+2. Download **`Antigravity_Conversation_Recovery.exe`** from the [Releases](../../releases) page
 3. Double-click it — a terminal window will open
 4. The tool scans your conversations, rebuilds the index, and shows you the results
 5. When prompted for workspace assignment, choose an option:
